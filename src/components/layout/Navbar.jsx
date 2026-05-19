@@ -7,13 +7,11 @@ export default function Navbar({ user, onLogout }) {
     <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex justify-between items-center h-16">
-          <Link to="/" className="flex items-center space-x-2">
-            <div className="bg-indigo-600 p-1.5 rounded-lg">
-              <GraduationCap className="h-6 w-6 text-white" />
+          <Link to="/" className="flex items-center group">
+            <div className="bg-indigo-600 p-2 rounded-xl text-white">
+              <GraduationCap className="h-6 w-6" />
             </div>
-            <span className="text-xl font-bold tracking-tight text-gray-900">
-              EDU<span className="text-indigo-600">SMART</span>
-            </span>
+            <span className="ml-3 font-black italic text-xl tracking-tighter uppercase text-indigo-900 hidden sm:inline-block">Digital School System</span>
           </Link>
 
           {user && (
