@@ -1,0 +1,6 @@
+{
+  "name": "Digital School System",
+  "description": "A gamified full-stack school management system focused on academic analytics, at-risk student detection, and parent engagement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
