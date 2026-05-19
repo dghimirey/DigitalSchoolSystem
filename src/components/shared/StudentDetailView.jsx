@@ -1,10 +1,71 @@
-import React from 'react';
-import { Award, Star, TrendingUp, Zap, Target, CheckCircle2, History, Brain, Calendar, Bell, GraduationCap, User } from 'lucide-react';
+import { Award, Star, TrendingUp, Zap, Target, CheckCircle2, History, Brain, Calendar, Bell, GraduationCap, User, MessageSquare, Loader2, Sparkles, Send, AlertTriangle, BarChart3 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, PieChart, Pie, Cell } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
+import ReactMarkdown from 'react-markdown';
 
-export default function StudentDetailView({ student, stats }) {
+export default function StudentDetailView({ student, stats, currentUser }) {
   if (!student || !stats) return null;
+
+  const [aiInsights, setAiInsights] = React.useState('');
+  const [loadingAi, setLoadingAi] = React.useState(false);
+  const [showMessenger, setShowMessenger] = React.useState(false);
+  const [msgContent, setMsgContent] = React.useState('');
+  const [messages, setMessages] = React.useState([]);
+  const [sendingMsg, setSendingMsg] = React.useState(false);
+
+  const fetchAiInsights = async () => {
+    setLoadingAi(true);
+    try {
+      const res = await fetch(`/api/teacher/student-insights/${student.id}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      setAiInsights(data.insights || 'No analysis available');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingAi(false);
+    }
+  };
+
+  const fetchMessages = async () => {
+    try {
+      const res = await fetch(`/api/messages/${student.id}`, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      setMessages(data);
+    } catch (err) { console.error(err); }
+  };
+
+  React.useEffect(() => {
+    if (showMessenger) fetchMessages();
+  }, [showMessenger]);
+
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    if (!msgContent.trim()) return;
+    setSendingMsg(true);
+    try {
+      const res = await fetch('/api/messages', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        },
+        body: JSON.stringify({
+          student_id: student.id,
+          receiver_id: currentUser.role === 'teacher' ? student.parent_id : student.teacher_id,
+          content: msgContent
+        })
+      });
+      if (res.ok) {
+        setMsgContent('');
+        fetchMessages();
+      }
+    } catch (err) { console.error(err); }
+    finally { setSendingMsg(false); }
+  };
 
   // Derived Analytics & Gamification
   const streak = stats.streak || 0;
@@ -262,6 +323,18 @@ export default function StudentDetailView({ student, stats }) {
                       <p className="text-2xl font-black text-indigo-950 italic leading-none">{averageScore}%</p>
                    </div>
                 </div>
+                <button 
+                 onClick={() => setShowMessenger(!showMessenger)}
+                 className="flex items-center gap-5 bg-white p-5 rounded-[1.75rem] border border-indigo-100 shadow-sm min-w-[160px] hover:scale-105 transition-transform duration-300 text-left"
+               >
+                   <div className="p-3 bg-blue-50 rounded-2xl">
+                      <MessageSquare className="h-5 w-5 text-blue-500" />
+                   </div>
+                   <div>
+                      <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-0.5">Contact</p>
+                      <p className="text-sm font-black text-indigo-950 uppercase italic leading-none">{currentUser?.role === 'teacher' ? 'Parent' : 'Teacher'}</p>
+                   </div>
+                </button>
                 {streak > 0 && (
                   <div className="flex items-center gap-5 bg-white p-5 rounded-[1.75rem] border border-gray-100 shadow-sm min-w-[160px] hover:scale-105 transition-transform duration-300">
                     <div className="p-3 bg-red-50 rounded-2xl">
@@ -277,6 +350,51 @@ export default function StudentDetailView({ student, stats }) {
           </div>
         </div>
       </div>
+
+      {showMessenger && (
+        <motion.div 
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="bg-white rounded-[2rem] border border-indigo-100 overflow-hidden shadow-xl"
+        >
+          <div className="p-6 bg-indigo-600 text-white flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <MessageSquare className="h-6 w-6" />
+              <h3 className="font-black uppercase tracking-tighter italic">Engagement Channel</h3>
+            </div>
+            <button onClick={() => setShowMessenger(false)} className="text-white/60 hover:text-white">✕</button>
+          </div>
+          <div className="p-6 space-y-4 max-h-[300px] overflow-y-auto bg-gray-50/50">
+            {messages.map((m, i) => (
+              <div key={i} className={`flex flex-col ${m.sender_id === currentUser.id ? 'items-end' : 'items-start'}`}>
+                <div className={`p-4 rounded-2xl max-w-[80%] text-sm font-bold shadow-sm ${m.sender_id === currentUser.id ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-100 rounded-tl-none'}`}>
+                  {m.content}
+                </div>
+                <span className="text-[8px] font-black text-gray-400 uppercase mt-1 px-1">{m.sender_name} • {new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+              </div>
+            ))}
+            {messages.length === 0 && (
+              <div className="text-center py-10">
+                <p className="text-gray-400 font-bold italic text-sm">Start a conversation about {student.name}'s progress.</p>
+              </div>
+            )}
+          </div>
+          <form onSubmit={sendMessage} className="p-4 border-t border-gray-100 bg-white flex gap-3">
+             <input 
+              className="flex-1 px-5 py-3 rounded-xl bg-gray-50 border-none outline-none font-bold text-sm focus:ring-2 focus:ring-indigo-100"
+              placeholder="Write a message..."
+              value={msgContent}
+              onChange={e => setMsgContent(e.target.value)}
+             />
+             <button 
+              disabled={sendingMsg}
+              className="p-3 bg-indigo-600 text-white rounded-xl shadow-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+             >
+                {sendingMsg ? <Loader2 className="animate-spin h-5 w-5" /> : <Send size={20} />}
+             </button>
+          </form>
+        </motion.div>
+      )}
 
       {insights?.failures.length > 0 && (
         <motion.div 
@@ -336,6 +454,38 @@ export default function StudentDetailView({ student, stats }) {
         </motion.div>
       )}
 
+      <div className="bg-indigo-950 rounded-[2.5rem] p-8 sm:p-12 text-white relative overflow-hidden group">
+         <div className="absolute top-0 right-0 p-12 opacity-5 rotate-12 scale-150 pointer-events-none group-hover:rotate-45 transition-transform duration-1000">
+            <Brain className="w-64 h-64" />
+         </div>
+         <div className="relative z-10 flex flex-col lg:flex-row justify-between items-center gap-8">
+            <div className="text-center lg:text-left">
+              <h4 className="text-4xl font-black italic uppercase tracking-tighter mb-2 flex items-center justify-center lg:justify-start gap-3">
+                <Sparkles className="text-amber-400 h-8 w-8" /> Smart Insights
+              </h4>
+              <p className="text-indigo-200 font-bold max-w-sm">Automated performance monitoring and actionable feedback for early intervention.</p>
+            </div>
+            
+            {!aiInsights ? (
+              <button 
+                onClick={fetchAiInsights}
+                disabled={loadingAi}
+                className="px-10 py-5 bg-amber-400 text-indigo-950 rounded-2xl font-black shadow-2xl hover:scale-105 active:scale-95 transition-all flex items-center gap-3 uppercase tracking-widest text-xs"
+              >
+                {loadingAi ? <Loader2 className="animate-spin h-5 w-5" /> : <TrendingUp className="h-5 w-5" />}
+                Analyze Performance
+              </button>
+            ) : (
+              <div className="bg-white/10 backdrop-blur-md p-8 rounded-3xl border border-white/10 w-full lg:max-w-2xl prose prose-invert prose-sm">
+                 <div className="markdown-body">
+                   <ReactMarkdown>{aiInsights}</ReactMarkdown>
+                 </div>
+                 <button onClick={() => setAiInsights('')} className="mt-6 text-[10px] font-black uppercase text-indigo-300 hover:text-white underline tracking-widest">Re-analyze with latest data</button>
+              </div>
+            )}
+         </div>
+      </div>
+
       <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard label="Attendance" value={`${attendanceRate}%`} sub={attendanceRate > 75 ? 'Good' : 'Very Low'} trend={attendanceRate > 75 ? 'positive' : 'warning'} />
         <MetricCard label="Average" value={averageScore} sub="Academic Status" trend={improvement >= 0 ? 'positive' : 'negative'} />
@@ -369,9 +519,157 @@ export default function StudentDetailView({ student, stats }) {
         <MetricCard label="Tasks" value={`${homeworkRate}%`} sub="Finished" trend={homeworkRate > 80 ? 'positive' : 'negative'} />
       </div>
 
+      {/* Academic Progress Journey - Full Width Highlight */}
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white p-8 sm:p-12 rounded-[3.5rem] border border-gray-100 shadow-xl shadow-indigo-50/50 overflow-hidden relative"
+      >
+        <div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
+          <TrendingUp size={200} className="text-indigo-600" />
+        </div>
+        <div className="relative z-10">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-12">
+            <div>
+              <h3 className="text-3xl font-black uppercase tracking-tighter italic text-indigo-950 mb-2">Academic Progress Journey</h3>
+              <p className="text-sm font-bold text-gray-400 uppercase tracking-widest">Performance trend across key subjects</p>
+            </div>
+            <div className="flex flex-wrap gap-4">
+              {subjectsList.map((sub, i) => (
+                <div key={sub} className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-full border border-gray-100">
+                  <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: subjectColors[i % subjectColors.length] }}></div>
+                  <span className="text-[10px] font-black text-gray-600 uppercase tracking-tight">{sub}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="h-[400px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                <XAxis 
+                  dataKey="exam_month" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fontSize: 10, fontWeight: 800, fill: '#64748b'}} 
+                  dy={15} 
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fontSize: 10, fontWeight: 800, fill: '#64748b'}} 
+                  domain={[0, 100]} 
+                  tickFormatter={(val) => `${val}%`}
+                />
+                <Tooltip 
+                  cursor={{ stroke: '#e2e8f0', strokeWidth: 2 }}
+                  contentStyle={{ 
+                    borderRadius: '24px', 
+                    border: '1px solid #f1f5f9', 
+                    boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)',
+                    padding: '20px'
+                  }}
+                  itemStyle={{ fontSize: '11px', fontWeight: '900', textTransform: 'uppercase', padding: '4px 0' }}
+                  labelStyle={{ fontSize: '12px', fontWeight: '900', color: '#1e1b4b', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}
+                />
+                {subjectsList.map((sub, i) => (
+                  <Line 
+                    key={sub} 
+                    type="monotone" 
+                    dataKey={sub} 
+                    stroke={subjectColors[i % subjectColors.length]} 
+                    strokeWidth={5} 
+                    dot={{ r: 6, fill: '#fff', strokeWidth: 3, stroke: subjectColors[i % subjectColors.length] }} 
+                    activeDot={{ r: 10, strokeWidth: 4, stroke: '#fff', fill: subjectColors[i % subjectColors.length] }}
+                    animationDuration={1500}
+                    animationBegin={i * 200}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </motion.div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {subjectsList.map((sub, i) => {
+          const subData = chartData.filter(d => d[sub] !== undefined).map(d => ({ month: d.exam_month, score: d[sub] }));
+          const avg = subData.length > 0 ? subData.reduce((acc, d) => acc + d.score, 0) / subData.length : 0;
+          const isElite = avg >= 85;
+          const isStruggling = avg < 45;
+          
+          return (
+            <motion.div 
+              key={sub}
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: i * 0.1 }}
+              className={`bg-white p-8 rounded-[3rem] border shadow-sm flex flex-col relative overflow-hidden group ${isElite ? 'border-green-100 ring-4 ring-green-50' : isStruggling ? 'border-red-100 ring-4 ring-red-50' : 'border-gray-100'}`}
+            >
+              {isElite && (
+                <div className="absolute -top-2 -right-2 bg-green-500 text-white px-6 py-2 rounded-bl-[1.5rem] font-black text-[9px] uppercase tracking-widest shadow-lg flex items-center gap-2">
+                  <Star size={10} className="fill-white" /> Elite Rank
+                </div>
+              )}
+              {isStruggling && (
+                <div className="absolute -top-2 -right-2 bg-red-600 text-white px-6 py-2 rounded-bl-[1.5rem] font-black text-[9px] uppercase tracking-widest shadow-lg flex items-center gap-2">
+                   <AlertTriangle size={10} /> Needs Push
+                </div>
+              )}
+              
+              <div className="flex justify-between items-start mb-6">
+                <div>
+                  <h4 className="text-xl font-black italic uppercase tracking-tighter text-indigo-950 group-hover:text-indigo-600 transition-colors">{sub}</h4>
+                  <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1">Average Proficiency: {Math.round(avg)}%</p>
+                </div>
+                <div className={`p-3 rounded-2xl ${isElite ? 'bg-green-50' : isStruggling ? 'bg-red-50' : 'bg-indigo-50'}`}>
+                  <BarChart3 size={18} className={isElite ? 'text-green-500' : isStruggling ? 'text-red-500' : 'text-indigo-600'} />
+                </div>
+              </div>
+
+              <div className="h-[200px] w-full mt-auto">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={subData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f8fafc" />
+                    <XAxis 
+                      dataKey="month" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fontSize: 9, fontWeight: 700, fill: '#94a3b8'}} 
+                      dy={10}
+                    />
+                    <YAxis 
+                      hide
+                      domain={[0, 100]}
+                    />
+                    <Tooltip 
+                      cursor={{ fill: '#f8fafc', radius: 10 }}
+                      contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '12px' }}
+                      itemStyle={{ fontWeight: 'black', textTransform: 'uppercase', fontSize: '10px' }}
+                      labelStyle={{ display: 'none' }}
+                    />
+                    <Bar 
+                      dataKey="score" 
+                      fill={isElite ? '#10b981' : isStruggling ? '#ef4444' : subjectColors[i % subjectColors.length]} 
+                      radius={[8, 8, 0, 0]} 
+                      barSize={32}
+                    >
+                      {subData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fillOpacity={0.8 + (index * 0.05)} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </motion.div>
+          );
+        })}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-1 space-y-6">
-           {/* Badges */}
+            {/* Badges */}
            <div className="bg-indigo-50 p-6 sm:p-8 rounded-[2.5rem] border border-indigo-100 shadow-sm space-y-6">
               <h3 className="font-black text-lg flex items-center gap-2 text-indigo-900 uppercase tracking-tighter italic">
                 <Star className="text-amber-500 fill-amber-500 h-5 w-5" /> Achievements
@@ -418,6 +716,40 @@ export default function StudentDetailView({ student, stats }) {
               </div>
            </div>
 
+           {/* Personal Goals / Reward System */}
+           <div className="bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-2xl relative overflow-hidden group">
+              <div className="absolute -bottom-4 -right-4 opacity-10 rotate-12 group-hover:scale-110 transition-transform">
+                <Target size={120} />
+              </div>
+              <h3 className="font-black text-lg flex items-center gap-2 mb-6 uppercase tracking-tighter italic"><Target className="text-amber-400 h-5 w-5" /> Goal Tracker</h3>
+              <div className="space-y-6">
+                {(stats.goals || []).length > 0 ? (
+                  stats.goals.map((goal, i) => {
+                    const progress = Math.min((goal.current_value / goal.target_value) * 100, 100);
+                    return (
+                      <div key={i} className="space-y-2">
+                        <div className="flex justify-between items-end">
+                            <p className="text-xs font-black uppercase tracking-widest text-indigo-50">{goal.title}</p>
+                            <p className="text-[10px] font-black uppercase italic">{goal.completed ? 'Success' : `${goal.current_value} / ${goal.target_value}`}</p>
+                        </div>
+                        <div className="h-3 bg-indigo-900/50 rounded-full overflow-hidden border border-indigo-400/20">
+                            <motion.div 
+                              initial={{ width: 0 }}
+                              animate={{ width: `${progress}%` }}
+                              className={`h-full ${goal.completed ? 'bg-amber-400 shadow-lg shadow-amber-400/20' : 'bg-indigo-400 shadow-lg shadow-indigo-400/20'}`}
+                            />
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-center py-8 border-2 border-dashed border-indigo-400/30 rounded-2xl">
+                    <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">No active milestones</p>
+                  </div>
+                )}
+              </div>
+           </div>
+
            {/* Live Feed */}
            <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-gray-100 shadow-sm">
              <h3 className="font-black text-lg flex items-center gap-2 mb-6 uppercase tracking-tighter italic"><Bell className="text-red-500 h-5 w-5" /> Recent Updates</h3>
@@ -439,53 +771,6 @@ export default function StudentDetailView({ student, stats }) {
         </div>
 
         <div className="lg:col-span-2 space-y-6">
-           {/* Performance Chart */}
-           <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden">
-             <div className="flex justify-between items-center mb-8">
-               <h3 className="font-black text-lg uppercase tracking-tighter italic">Marks Chart</h3>
-               <div className="flex gap-1">
-                 {subjectColors.slice(0, subjectsList.length).map((c, i) => (
-                   <div key={i} className="w-2 h-2 rounded-full" style={{ backgroundColor: c }}></div>
-                 ))}
-               </div>
-             </div>
-             <div className="h-[300px] w-full">
-               <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={chartData}>
-                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f8fafc" />
-                   <XAxis 
-                     dataKey="exam_month" 
-                     axisLine={false} 
-                     tickLine={false} 
-                     tick={{fontSize: 9, fontWeight: 700, fill: '#94a3b8'}} 
-                     dy={10} 
-                   />
-                   <YAxis 
-                     axisLine={false} 
-                     tickLine={false} 
-                     tick={{fontSize: 9, fontWeight: 700, fill: '#94a3b8'}} 
-                     domain={[0, 100]} 
-                   />
-                   <Tooltip 
-                     contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)' }}
-                     itemStyle={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase' }}
-                   />
-                   {subjectsList.map((sub, i) => (
-                     <Line 
-                       key={sub} 
-                       type="monotone" 
-                       dataKey={sub} 
-                       stroke={subjectColors[i % subjectColors.length]} 
-                       strokeWidth={4} 
-                       dot={{r: 5, fill: subjectColors[i % subjectColors.length], strokeWidth: 2, stroke: '#fff'}} 
-                       activeDot={{ r: 8, strokeWidth: 4, stroke: '#fff' }}
-                     />
-                   ))}
-                 </LineChart>
-               </ResponsiveContainer>
-             </div>
-           </div>
-
            {/* Growth Analytics */}
            <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden">
              <h3 className="font-black text-lg mb-8 flex items-center gap-2 uppercase tracking-tighter italic"><TrendingUp className="text-indigo-600 h-5 w-5" /> Progress Chart</h3>

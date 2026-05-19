@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { GraduationCap, Users, Settings, Save, RefreshCw, Smartphone } from 'lucide-react';
+import { GraduationCap, Users, Settings, Save, RefreshCw, Smartphone, Bell, MessageSquare, CheckCircle2, History } from 'lucide-react';
 import StudentDetailView from '../shared/StudentDetailView';
 
-export default function ParentDashboard({ user, socket }) {
+export default function ParentDashboard({ user, socket, onUpdateUser }) {
   const [children, setChildren] = useState([]);
   const [selectedChild, setSelectedChild] = useState(null);
   const [stats, setStats] = useState({ attendance: [], marks: [], alerts: [], goals: [], assignments: [], recentAttendance: [] });
@@ -10,7 +10,11 @@ export default function ParentDashboard({ user, socket }) {
   const [activeTab, setActiveTab] = useState('summary');
   
   // Profile State
-  const [profileData, setProfileData] = useState({ name: user?.name || '', mobile: user?.mobile || '' });
+  const [profileData, setProfileData] = useState({ 
+    name: user?.name || '', 
+    mobile: user?.mobile || '',
+    notification_settings: user?.notification_settings || {} 
+  });
   const [profileSaving, setProfileSaving] = useState(false);
 
   const token = localStorage.getItem('token');
@@ -21,9 +25,33 @@ export default function ParentDashboard({ user, socket }) {
       .then(data => {
         const childrenList = Array.isArray(data) ? data : [];
         setChildren(childrenList);
-        if (childrenList.length > 0) setSelectedChild(childrenList[0]);
+        if (childrenList.length > 0 && !selectedChild) setSelectedChild(childrenList[0]);
+        
+        // Initialize notification settings for each child if missing
+        setProfileData(prev => {
+          const updatedSettings = { ...prev.notification_settings };
+          let changed = false;
+          childrenList.forEach(child => {
+            if (!updatedSettings[child.id]) {
+              updatedSettings[child.id] = { attendance: true, marks: true, messages: true };
+              changed = true;
+            }
+          });
+          return changed ? { ...prev, notification_settings: updatedSettings } : prev;
+        });
       });
   }, []);
+
+  useEffect(() => {
+    if (user) {
+      setProfileData(prev => ({
+        ...prev,
+        name: user.name,
+        mobile: user.mobile,
+        notification_settings: user.notification_settings || {}
+      }));
+    }
+  }, [user]);
 
   useEffect(() => {
     if (selectedChild) {
@@ -45,11 +73,36 @@ export default function ParentDashboard({ user, socket }) {
   useEffect(() => {
     if (socket) {
       socket.on('new_alert', (alert) => {
+        // Check if student_id is in settings and if type is enabled
+        const settings = profileData.notification_settings[alert.student_id];
+        if (settings && settings[alert.type] === false) {
+          console.log(`Suppressed notification of type ${alert.type} for student ${alert.student_id}`);
+          return;
+        }
+
+        setNotifications(prev => [alert, ...prev]);
+        setStats(prev => ({ ...prev, alerts: [alert, ...prev.alerts] }));
+      });
+
+      socket.on('new_message', (msg) => {
+        const settings = profileData.notification_settings[msg.student_id];
+        if (settings && settings.messages === false) {
+          return;
+        }
+        
+        // Show a message alert
+        const alert = { student_id: msg.student_id, message: `New message from ${msg.sender_role}: ${msg.content.substring(0, 30)}...`, type: 'messages', created_at: new Date() };
         setNotifications(prev => [alert, ...prev]);
         setStats(prev => ({ ...prev, alerts: [alert, ...prev.alerts] }));
       });
     }
-  }, [socket]);
+    return () => {
+      if (socket) {
+        socket.off('new_alert');
+        socket.off('new_message');
+      }
+    };
+  }, [socket, profileData.notification_settings]);
 
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
@@ -61,7 +114,13 @@ export default function ParentDashboard({ user, socket }) {
         body: JSON.stringify(profileData)
       });
       if (res.ok) {
-        alert('Profile updated successfully!');
+        onUpdateUser({ 
+          ...user, 
+          name: profileData.name, 
+          mobile: profileData.mobile, 
+          notification_settings: profileData.notification_settings 
+        });
+        alert('Settings updated successfully!');
       } else {
         alert('Failed to update profile');
       }
@@ -71,6 +130,19 @@ export default function ParentDashboard({ user, socket }) {
     } finally {
       setProfileSaving(false);
     }
+  };
+
+  const toggleNotification = (childId, type) => {
+    setProfileData(prev => ({
+      ...prev,
+      notification_settings: {
+        ...prev.notification_settings,
+        [childId]: {
+          ...prev.notification_settings[childId],
+          [type]: !prev.notification_settings[childId]?.[type]
+        }
+      }
+    }));
   };
 
   return (
@@ -129,7 +201,7 @@ export default function ParentDashboard({ user, socket }) {
       </div>
 
       {selectedChild && stats ? (
-        <StudentDetailView student={selectedChild} stats={stats} />
+        <StudentDetailView student={selectedChild} stats={stats} currentUser={user} />
       ) : (
         <div className="flex flex-col items-center justify-center py-24 text-gray-400">
            <GraduationCap className="h-24 w-24 mb-6 opacity-30 text-indigo-900" />
@@ -186,6 +258,51 @@ export default function ParentDashboard({ user, socket }) {
                   <div>
                     <p className="text-[10px] font-black uppercase text-indigo-400 tracking-widest">Account ID</p>
                     <p className="font-mono text-xs font-bold text-indigo-900">@{user?.username}</p>
+                  </div>
+               </div>
+
+               <div className="space-y-6 pt-6 border-t border-gray-100">
+                  <h4 className="text-sm font-black text-indigo-900 uppercase tracking-widest flex items-center gap-2">
+                    <Bell size={16} /> Notification Preferences
+                  </h4>
+                  <div className="space-y-4">
+                    {children.map(child => (
+                      <div key={child.id} className="bg-gray-50 rounded-2xl p-6 border border-gray-100">
+                        <div className="flex justify-between items-center mb-4">
+                          <p className="text-xs font-black text-indigo-900 uppercase tracking-widest">{child.name}</p>
+                          <span className="text-[8px] bg-indigo-100 text-indigo-600 px-2 py-0.5 rounded-full font-black uppercase tracking-tighter">{child.class_name}</span>
+                        </div>
+                        <div className="grid grid-cols-1 gap-3">
+                          {[
+                            { id: 'attendance', label: 'Attendance Alerts', icon: History, sub: 'Daily presence/absence notifications' },
+                            { id: 'marks', label: 'Academic Alerts', icon: GraduationCap, sub: 'Updates on class tests and major exams' },
+                            { id: 'messages', label: 'Teacher Messages', icon: MessageSquare, sub: 'Direct PMs from class instructors' }
+                          ].map(opt => (
+                            <div key={opt.id} className="flex items-center justify-between bg-white p-4 rounded-xl border border-gray-50 hover:border-indigo-100 transition-colors">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
+                                   <opt.icon size={16} />
+                                </div>
+                                <div>
+                                  <span className="block text-[10px] font-black text-gray-900 uppercase tracking-tight">{opt.label}</span>
+                                  <span className="block text-[8px] text-gray-400 font-bold uppercase tracking-tighter">{opt.sub}</span>
+                                </div>
+                              </div>
+                              <button 
+                                type="button"
+                                onClick={() => toggleNotification(child.id, opt.id)}
+                                className={`w-10 h-6 rounded-full relative transition-all duration-300 ${profileData.notification_settings[child.id]?.[opt.id] ? 'bg-green-500 shadow-lg shadow-green-100' : 'bg-gray-200'}`}
+                              >
+                                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all duration-300 ${profileData.notification_settings[child.id]?.[opt.id] ? 'left-5' : 'left-1'}`} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                    {children.length === 0 && (
+                      <p className="text-center py-4 text-xs font-bold text-gray-400 italic">No kids linked to this account yet.</p>
+                    )}
                   </div>
                </div>
 

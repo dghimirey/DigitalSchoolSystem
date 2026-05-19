@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Book, Users, ClipboardCheck, Award, MessageCircle, BarChart3, TrendingUp, AlertTriangle, Calendar, Plus, CheckCircle2, XCircle, CheckSquare, Square, ChevronRight, Save, RefreshCw, Menu, X as CloseIcon } from 'lucide-react';
+import { Book, Users, ClipboardCheck, Award, MessageCircle, BarChart3, TrendingUp, AlertTriangle, Calendar, Plus, CheckCircle2, XCircle, CheckSquare, Square, ChevronRight, Save, RefreshCw, Menu, Clock, Target, X as CloseIcon } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import StudentDetailView from '../shared/StudentDetailView';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function TeacherDashboard({ user }) {
   const [classes, setClasses] = useState([]);
@@ -36,10 +38,24 @@ export default function TeacherDashboard({ user }) {
   // Analytics State
   const [performanceData, setPerformanceData] = useState([]);
   const [atRiskStudents, setAtRiskStudents] = useState([]);
+  const [detailedAtRisk, setDetailedAtRisk] = useState([]);
+  const [loadingRisk, setLoadingRisk] = useState(false);
+  
+  // Modal for individual student view
+  const [selectedStudentDetail, setSelectedStudentDetail] = useState(null);
+  const [studentStats, setStudentStats] = useState(null);
+  const [loadingStudentStats, setLoadingStudentStats] = useState(false);
   
   // Marks State
   const [marksConfig, setMarksConfig] = useState({ subject: '', month: 'January', fullMarks: 100 });
   const [currentMarks, setCurrentMarks] = useState({});
+  const [marksSaving, setMarksSaving] = useState(false);
+
+  // Goals State
+  const [classGoals, setClassGoals] = useState([]);
+  const [showGoalModal, setShowGoalModal] = useState(false);
+  const [goalForm, setGoalForm] = useState({ student_id: '', title: '', target_value: 100 });
+  const [goalsLoading, setGoalsLoading] = useState(false);
 
   const token = localStorage.getItem('token');
 
@@ -60,8 +76,129 @@ export default function TeacherDashboard({ user }) {
       fetchAssignments();
       fetchSubjects();
       fetchClassStats();
+      fetchAtRiskDetails();
+      fetchClassGoals();
     }
   }, [selectedClass]);
+
+  const fetchClassGoals = async () => {
+    if (!selectedClass) return;
+    setGoalsLoading(true);
+    try {
+      const res = await fetch(`/api/teacher/class-goals/${selectedClass.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const data = await res.json();
+      setClassGoals(Array.isArray(data) ? data : []);
+    } catch (err) { console.error(err); }
+    finally { setGoalsLoading(false); }
+  };
+
+  const handleCreateGoal = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/teacher/goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(goalForm)
+      });
+      if (res.ok) {
+        setShowGoalModal(false);
+        setGoalForm({ student_id: '', title: '', target_value: 100 });
+        fetchClassGoals();
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const updateGoalProgress = async (goalId, current, completed) => {
+    try {
+      const res = await fetch(`/api/teacher/goals/${goalId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ current_value: current, completed })
+      });
+      if (res.ok) fetchClassGoals();
+    } catch (err) { console.error(err); }
+  };
+
+  const deleteGoal = async (id) => {
+    if (!confirm('Delete this goal?')) return;
+    try {
+      const res = await fetch(`/api/teacher/goals/${id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) fetchClassGoals();
+    } catch (err) { console.error(err); }
+  };
+
+  const handleBulkSaveMarks = async () => {
+    if (!marksConfig.subject) return alert('Please select a subject first');
+    const studentIds = Object.keys(currentMarks);
+    if (studentIds.length === 0) return alert('No marks have been entered.');
+    
+    // Validate if any score exceeds full marks before sending
+    for (const sid of studentIds) {
+      const score = currentMarks[sid];
+      if (score === '' || score === null) continue;
+      if (parseInt(score) > marksConfig.fullMarks) {
+        const student = students.find(s => s.id == sid);
+        return alert(`Error: ${student?.name}'s score exceeds the full marks limit of ${marksConfig.fullMarks}`);
+      }
+    }
+
+    setMarksSaving(true);
+    try {
+      const marksArray = studentIds
+        .filter(sid => currentMarks[sid] !== '' && currentMarks[sid] !== null)
+        .map(sid => ({
+          student_id: parseInt(sid),
+          score: currentMarks[sid]
+        }));
+
+      const res = await fetch('/api/teacher/marks/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ 
+          marks: marksArray,
+          subject: marksConfig.subject,
+          exam_month: marksConfig.month,
+          total_marks: marksConfig.fullMarks
+        })
+      });
+
+      if (res.ok) {
+        alert('All marks saved successfully!');
+      } else {
+        const data = await res.json();
+        alert(data.error || 'Failed to save marks');
+      }
+    } catch (err) {
+      console.error(err);
+      alert('A network error occurred.');
+    } finally {
+      setMarksSaving(false);
+    }
+  };
+
+  const fetchAtRiskDetails = async () => {
+    if (!selectedClass) return;
+    setLoadingRisk(true);
+    try {
+      const res = await fetch(`/api/teacher/at-risk/${selectedClass.id}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const data = await res.json();
+      setDetailedAtRisk(data);
+    } catch (err) { console.error(err); }
+    finally { setLoadingRisk(false); }
+  };
+
+  const fetchStudentFullStats = async (studentId) => {
+    setLoadingStudentStats(true);
+    try {
+      const res = await fetch(`/api/parent/student-stats/${studentId}`, { headers: { 'Authorization': `Bearer ${token}` } });
+      const data = await res.json();
+      setStudentStats(data);
+    } catch (err) { console.error(err); }
+    finally { setLoadingStudentStats(false); }
+  };
 
   useEffect(() => {
     if (selectedClass && activeTab === 'attendance') {
@@ -407,6 +544,8 @@ export default function TeacherDashboard({ user }) {
             { id: 'subjects', label: 'Subjects', icon: Book },
             { id: 'assignments', label: 'Assignments', icon: Book },
             { id: 'marks', label: 'Marks', icon: Award },
+            { id: 'goals', label: 'Goals', icon: Target },
+            { id: 'risk', label: 'Risk Watch', icon: AlertTriangle },
             { id: 'analytics', label: 'Reports', icon: BarChart3 },
             { id: 'profile', label: 'Profile', icon: Users }
           ].map(tab => (
@@ -426,6 +565,228 @@ export default function TeacherDashboard({ user }) {
         </div>
 
         <div className="transition-all duration-500">
+          {activeTab === 'goals' && (
+            <div className="space-y-6">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                <div>
+                  <h3 className="text-3xl font-black italic uppercase tracking-tighter text-indigo-900 leading-none mb-2">Student Milestones</h3>
+                  <p className="text-sm font-bold text-gray-400 uppercase tracking-widest italic">Personalized growth tracking for {selectedClass?.name}</p>
+                </div>
+                <button 
+                  onClick={() => setShowGoalModal(true)}
+                  className="flex items-center gap-3 bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl shadow-indigo-100 hover:scale-105 active:scale-95 transition-all text-xs uppercase tracking-tighter"
+                >
+                  <Plus className="h-5 w-5" /> Set Personalized Goal
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {classGoals.map((goal) => (
+                  <div key={goal.id} className="bg-white rounded-[2.5rem] border border-gray-100 p-8 shadow-sm hover:shadow-xl transition-all relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-8 opacity-[0.03] rotate-12 pointer-events-none group-hover:scale-110 transition-transform">
+                      <Target size={120} />
+                    </div>
+                    
+                    <div className="flex justify-between items-start mb-6">
+                      <div>
+                        <h4 className="font-black text-xl italic text-gray-900 mb-1">{goal.student_name}</h4>
+                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Goal: {goal.title}</p>
+                      </div>
+                      <button 
+                        onClick={() => deleteGoal(goal.id)}
+                        className="p-2 text-gray-300 hover:text-red-500 transition-colors"
+                      >
+                        <XCircle size={18} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-6">
+                       <div className="flex justify-between items-end">
+                          <p className={`text-[10px] font-black uppercase tracking-widest ${goal.completed ? 'text-green-500' : 'text-gray-400'}`}>
+                            {goal.completed ? 'Achieved!' : `Step ${goal.current_value} of ${goal.target_value}`}
+                          </p>
+                          <p className="text-[9px] font-black italic text-gray-400">Target: {goal.target_value}</p>
+                       </div>
+                       
+                       <div className="h-4 bg-gray-50 rounded-full overflow-hidden border border-gray-100 p-1">
+                          <motion.div 
+                            initial={{ width: 0 }}
+                            animate={{ width: `${Math.min((goal.current_value / goal.target_value) * 100, 100)}%` }}
+                            className={`h-full rounded-full transition-all duration-1000 ${goal.completed ? 'bg-green-500 shadow-lg shadow-green-100' : 'bg-indigo-500 shadow-lg shadow-indigo-100'}`}
+                          />
+                       </div>
+
+                       <div className="grid grid-cols-2 gap-3">
+                          <button 
+                            onClick={() => {
+                              const newVal = Math.min(goal.current_value + 1, goal.target_value);
+                              updateGoalProgress(goal.id, newVal, newVal >= goal.target_value);
+                            }}
+                            disabled={goal.completed}
+                            className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${goal.completed ? 'bg-green-50 text-green-500 cursor-not-allowed opacity-50' : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 active:scale-95'}`}
+                          >
+                            + Progress
+                          </button>
+                          <button 
+                            onClick={() => updateGoalProgress(goal.id, goal.target_value, !goal.completed)}
+                            className={`py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${goal.completed ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'bg-green-50 text-green-600 hover:bg-green-100'}`}
+                          >
+                            {goal.completed ? 'Reopen Goal' : 'Complete Now'}
+                          </button>
+                       </div>
+                    </div>
+                  </div>
+                ))}
+
+                {classGoals.length === 0 && !goalsLoading && (
+                  <div className="col-span-full py-24 text-center bg-gray-50 rounded-[3rem] border border-dashed border-gray-200">
+                    <Target className="h-20 w-20 text-gray-200 mx-auto mb-6" />
+                    <h4 className="text-2xl font-black italic text-gray-400 uppercase tracking-tighter">No Milestones Set</h4>
+                    <p className="text-gray-400 font-bold max-w-xs mx-auto mt-2">Start defining personalized targets to boost student engagement and performance.</p>
+                  </div>
+                )}
+                {goalsLoading && <div className="col-span-full py-20 text-center"><RefreshCw className="animate-spin h-10 w-10 text-indigo-200 mx-auto" /></div>}
+              </div>
+
+              {/* Goal Modal */}
+              <AnimatePresence>
+                {showGoalModal && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-indigo-950/40 backdrop-blur-md"
+                  >
+                    <motion.div 
+                      initial={{ scale: 0.9, y: 20 }}
+                      animate={{ scale: 1, y: 0 }}
+                      exit={{ scale: 0.9, y: 20 }}
+                      className="bg-white w-full max-w-md rounded-[3rem] p-10 shadow-2xl relative"
+                    >
+                       <button onClick={() => setShowGoalModal(false)} className="absolute top-8 right-8 text-gray-300 hover:text-red-500 transition-colors">
+                          <CloseIcon size={24} />
+                       </button>
+                       <h3 className="text-3xl font-black italic uppercase tracking-tighter text-indigo-900 mb-8">Set Milestone</h3>
+                       
+                       <form onSubmit={handleCreateGoal} className="space-y-6">
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Select Student</label>
+                             <select 
+                                required
+                                value={goalForm.student_id}
+                                onChange={e => setGoalForm({...goalForm, student_id: e.target.value})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold text-gray-900 outline-none focus:ring-4 focus:ring-indigo-100 transition-all"
+                             >
+                                <option value="">Targeted Student</option>
+                                {students.map(s => <option key={s.id} value={s.id}>{s.name} (Roll: {s.roll_number})</option>)}
+                             </select>
+                          </div>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Goal Description</label>
+                             <input 
+                                required
+                                type="text"
+                                placeholder="e.g., Score 90% in Math"
+                                value={goalForm.title}
+                                onChange={e => setGoalForm({...goalForm, title: e.target.value})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-bold text-gray-900 outline-none focus:ring-4 focus:ring-indigo-100 transition-all"
+                             />
+                          </div>
+
+                          <div className="space-y-2">
+                             <label className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Target Value (Steps/Score)</label>
+                             <input 
+                                required
+                                type="number"
+                                value={goalForm.target_value}
+                                onChange={e => setGoalForm({...goalForm, target_value: parseInt(e.target.value) || 100})}
+                                className="w-full bg-gray-50 border border-gray-100 rounded-2xl px-6 py-4 font-black text-indigo-600 outline-none focus:ring-4 focus:ring-indigo-100 transition-all"
+                             />
+                          </div>
+
+                          <button 
+                            type="submit"
+                            className="w-full py-5 bg-indigo-600 text-white rounded-[2rem] font-black uppercase tracking-widest text-xs shadow-xl shadow-indigo-100 hover:scale-105 active:scale-95 transition-all mt-4"
+                          >
+                            Launch Milestone
+                          </button>
+                       </form>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {activeTab === 'risk' && (
+            <div className="space-y-6">
+              <div className="bg-red-900 rounded-[2.5rem] p-10 text-white relative overflow-hidden">
+                 <div className="absolute top-0 right-0 p-12 opacity-5 rotate-12 scale-150">
+                    <AlertTriangle className="w-64 h-64" />
+                 </div>
+                 <div className="relative z-10">
+                    <h4 className="text-4xl font-black italic uppercase tracking-tighter mb-2">Internal Risk Analysis</h4>
+                    <p className="text-red-200 font-bold max-w-sm">Early intervention identifies students struggling with attendance, grades, or assignments.</p>
+                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                 {detailedAtRisk.map((s, idx) => (
+                   <div key={idx} className="bg-white rounded-[2rem] border-2 border-red-50 p-8 shadow-sm hover:shadow-xl transition-all group relative">
+                      <div className="absolute top-4 right-4 bg-red-600 text-white w-10 h-10 rounded-xl flex items-center justify-center font-black italic shadow-lg">
+                        {s.riskScore}%
+                      </div>
+                      <h5 className="font-black text-xl italic text-gray-900 mb-1">{s.name}</h5>
+                      <p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-4">Risk Level: {s.riskScore > 70 ? 'Severely At Risk' : 'Needs Attention'}</p>
+                      
+                      <div className="space-y-3 mb-6">
+                        {s.reasons.map((r, i) => (
+                          <div key={i} className="flex items-center gap-2 text-xs font-bold text-gray-500">
+                            <div className="w-1.5 h-1.5 rounded-full bg-red-400"></div>
+                            {r}
+                          </div>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 mb-8">
+                        <div className="bg-gray-50 p-3 rounded-xl text-center">
+                          <p className="text-[7px] font-black uppercase text-gray-400">Attendance</p>
+                          <p className={`font-black text-xs ${s.metrics.attendanceRate < 85 ? 'text-red-500' : 'text-gray-900'}`}>{Math.round(s.metrics.attendanceRate)}%</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-xl text-center">
+                          <p className="text-[7px] font-black uppercase text-gray-400">Average</p>
+                          <p className={`font-black text-xs ${s.metrics.avgScore < 45 ? 'text-red-500' : 'text-gray-900'}`}>{Math.round(s.metrics.avgScore)}%</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-xl text-center">
+                          <p className="text-[7px] font-black uppercase text-gray-400">Missing HW</p>
+                          <p className={`font-black text-xs ${s.metrics.missingRate > 40 ? 'text-red-500' : 'text-gray-900'}`}>{Math.round(s.metrics.missingRate)}%</p>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={() => {
+                          setSelectedStudentDetail(s);
+                          fetchStudentFullStats(s.id);
+                        }}
+                        className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:scale-105 active:scale-95 transition-all shadow-lg"
+                      >
+                        Deep Profile & Contact
+                      </button>
+                   </div>
+                 ))}
+                 {detailedAtRisk.length === 0 && !loadingRisk && (
+                   <div className="col-span-full py-20 text-center bg-green-50 rounded-[2.5rem] border-2 border-dashed border-green-100">
+                      <CheckCircle2 className="mx-auto h-16 w-16 text-green-200 mb-4" />
+                      <h4 className="text-2xl font-black italic text-green-800 uppercase italic">Class Health: Elite</h4>
+                      <p className="text-green-600 font-bold max-w-xs mx-auto">No students currently meet the At-Risk criteria. Great job!</p>
+                   </div>
+                 )}
+                 {loadingRisk && <div className="col-span-full text-center py-12"><RefreshCw className="animate-spin mx-auto h-8 w-8 text-indigo-200" /></div>}
+              </div>
+            </div>
+          )}
+
           {activeTab === 'attendance' && (
             <div className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden">
               <div className="p-8 border-b border-gray-100 flex flex-col md:flex-row justify-between items-center gap-6">
@@ -467,34 +828,61 @@ export default function TeacherDashboard({ user }) {
                   </thead>
                   <tbody className="divide-y divide-gray-50">
                     {students.map(s => (
-                      <tr key={s.id} className="hover:bg-indigo-50/20 group transition-colors">
+                      <tr key={s.id} className={`hover:bg-indigo-50/20 group transition-colors ${
+                        attendanceData[s.id] === 'absent' ? 'bg-red-50/10' : 
+                        attendanceData[s.id] === 'late' ? 'bg-amber-50/10' : 
+                        attendanceData[s.id] === 'present' ? 'bg-green-50/10' : ''
+                      }`}>
                         <td className="px-8 py-6 font-mono text-xs font-black text-indigo-300 group-hover:text-indigo-600 transition-colors">#{String(s.roll_number).padStart(3, '0')}</td>
                         <td className="px-8 py-6">
-                          <p className="font-black text-gray-900 text-sm">{s.name}</p>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase italic">Student</p>
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                              attendanceData[s.id] === 'present' ? 'bg-green-500 shadow-sm shadow-green-200' :
+                              attendanceData[s.id] === 'absent' ? 'bg-red-500 shadow-sm shadow-red-200' :
+                              attendanceData[s.id] === 'late' ? 'bg-amber-500 shadow-sm shadow-amber-200' :
+                              'bg-gray-200'
+                            }`} />
+                            <div>
+                              <p className="font-black text-gray-900 text-sm">{s.name}</p>
+                              <p className="text-[10px] font-bold text-gray-400 uppercase italic">Student</p>
+                            </div>
+                          </div>
                         </td>
                         <td className="px-8 py-6">
                           <div className="flex justify-end space-x-1 sm:space-x-2">
-                            <button 
+                             <button 
                               onClick={() => markAttendance(s.id, 'present')} 
-                              className={`flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                              className={`flex items-center space-x-2 px-3 sm:px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
                                 attendanceData[s.id] === 'present' 
                                   ? 'bg-green-600 text-white shadow-xl shadow-green-100 ring-2 ring-green-500/20' 
                                   : 'bg-white border border-gray-100 text-gray-400 hover:border-green-200 hover:text-green-600'
                               }`}
                             >
-                              <CheckCircle2 className="h-3 w-3" />
+                              <CheckCircle2 className="h-3.5 w-3.5" />
                               <span className="hidden sm:inline">Present</span>
                             </button>
+                            
+                            <button 
+                              onClick={() => markAttendance(s.id, 'late')} 
+                              className={`flex items-center space-x-2 px-3 sm:px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                                attendanceData[s.id] === 'late' 
+                                  ? 'bg-amber-500 text-white shadow-xl shadow-amber-100 ring-2 ring-amber-400/20' 
+                                  : 'bg-white border border-gray-100 text-gray-400 hover:border-amber-200 hover:text-amber-500'
+                              }`}
+                            >
+                              <Clock className="h-3.5 w-3.5" />
+                              <span className="hidden sm:inline">Late</span>
+                            </button>
+
                             <button 
                               onClick={() => markAttendance(s.id, 'absent')} 
-                              className={`flex items-center space-x-2 px-4 sm:px-6 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
+                              className={`flex items-center space-x-2 px-3 sm:px-5 py-3 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
                                 attendanceData[s.id] === 'absent' 
                                   ? 'bg-red-600 text-white shadow-xl shadow-red-100 ring-2 ring-red-500/20' 
                                   : 'bg-white border border-gray-100 text-gray-400 hover:border-red-200 hover:text-red-600'
                               }`}
                             >
-                              <XCircle className="h-3 w-3" />
+                              <XCircle className="h-3.5 w-3.5" />
                               <span className="hidden sm:inline">Absent</span>
                             </button>
                           </div>
@@ -732,34 +1120,12 @@ export default function TeacherDashboard({ user }) {
                 <RefreshCw className="h-4 w-4" /> Load
               </button>
               <button 
-                onClick={async () => {
-                  const studentIds = Object.keys(currentMarks);
-                  if (studentIds.length === 0) return alert('No marks to save');
-                  let success = true;
-                  for (const sid of studentIds) {
-                    try {
-                      const score = currentMarks[sid];
-                      if (score === '' || score === null) continue;
-                      const res = await fetch('/api/teacher/marks', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                        body: JSON.stringify({ 
-                          student_id: sid, 
-                          subject: marksConfig.subject, 
-                          exam_month: marksConfig.month, 
-                          score: parseInt(score), 
-                          total_marks: marksConfig.fullMarks 
-                        })
-                      });
-                      if (!res.ok) success = false;
-                    } catch (e) { success = false; }
-                  }
-                  if (success) alert('All marks saved successfully!');
-                  else alert('Some marks failed to save. Please check individual records.');
-                }}
-                className="px-8 py-4 bg-green-600 text-white rounded-2xl font-black shadow-lg hover:scale-105 transition-all flex items-center gap-2"
+                onClick={handleBulkSaveMarks}
+                disabled={marksSaving}
+                className={`px-8 py-4 bg-green-600 text-white rounded-2xl font-black shadow-lg hover:scale-105 transition-all flex items-center gap-2 disabled:opacity-50 disabled:scale-100 ${marksSaving ? 'animate-pulse' : ''}`}
               >
-                <Save className="h-4 w-4" /> Save All
+                {marksSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                {marksSaving ? 'Saving...' : 'Save All'}
               </button>
             </div>
 
@@ -783,7 +1149,7 @@ export default function TeacherDashboard({ user }) {
                               ? 'border-amber-400 focus:ring-4 focus:ring-amber-50 bg-amber-50/10'
                               : 'border-gray-200 focus:ring-2 focus:ring-indigo-500'
                         }`}
-                        value={currentMarks[s.id] || ''}
+                        value={currentMarks[s.id] !== undefined && currentMarks[s.id] !== null ? currentMarks[s.id] : ''}
                         onChange={e => {
                           const val = e.target.value;
                           setCurrentMarks({...currentMarks, [s.id]: val});
@@ -867,6 +1233,28 @@ export default function TeacherDashboard({ user }) {
                 )}
               </div>
             </div>
+            <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm border-l-8 border-l-indigo-500">
+              <h4 className="font-black text-xl mb-6 flex items-center gap-2"><Users className="text-indigo-500 h-6 w-6" /> Class Directory</h4>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {students.map((s, idx) => (
+                  <button 
+                    key={idx} 
+                    onClick={() => {
+                        setSelectedStudentDetail(s);
+                        fetchStudentFullStats(s.id);
+                    }}
+                    className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-transparent hover:border-indigo-100 hover:bg-white transition-all text-left group"
+                  >
+                    <div>
+                        <p className="text-sm font-black text-gray-900 group-hover:text-indigo-600 transition-colors uppercase">{s.name}</p>
+                        <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest">Roll: {s.roll_number}</p>
+                    </div>
+                    <ChevronRight size={16} className="text-gray-300 group-hover:text-indigo-400 group-hover:translate-x-1 transition-all" />
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm border-l-8 border-l-red-500">
               <h4 className="font-black text-xl mb-6 flex items-center gap-2"><AlertTriangle className="text-red-500 h-6 w-6" /> Alerts</h4>
               <div className="space-y-4">
@@ -984,8 +1372,54 @@ export default function TeacherDashboard({ user }) {
           </div>
         </div>
       )}
-    </div>
-  );
+
+      <AnimatePresence>
+        {selectedStudentDetail && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-indigo-950/40 backdrop-blur-md"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              className="bg-gray-50 w-full max-w-6xl max-h-[90vh] rounded-[3rem] overflow-hidden shadow-2xl relative flex flex-col"
+            >
+              <div className="p-8 border-b border-gray-100 flex justify-between items-center bg-white">
+                 <h3 className="text-2xl font-black italic uppercase tracking-tighter text-indigo-900">Student Intelligence Profile</h3>
+                 <button 
+                  onClick={() => {
+                      setSelectedStudentDetail(null);
+                      setStudentStats(null);
+                  }}
+                  className="p-3 bg-red-50 text-red-500 rounded-2xl hover:bg-red-100 transition-colors"
+                 >
+                   <CloseIcon size={24} />
+                 </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                {loadingStudentStats ? (
+                  <div className="flex flex-col items-center justify-center py-20 grayscale">
+                    <RefreshCw className="animate-spin h-12 w-12 text-indigo-500 mb-4" />
+                    <p className="font-black uppercase tracking-widest text-xs text-gray-400">Assembling Analytics...</p>
+                  </div>
+                ) : studentStats ? (
+                  <StudentDetailView student={selectedStudentDetail} stats={studentStats} currentUser={user} />
+                ) : (
+                <div className="text-center py-20">
+                   <AlertTriangle className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+                   <p className="text-gray-400 font-bold italic">Could not load intelligence data.</p>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </div>
+ );
 }
 
 function RiskItem({ name, reason }) {

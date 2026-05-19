@@ -39,6 +39,11 @@ export default function App() {
     setUser(userData);
   };
 
+  const updateUser = (updatedUser) => {
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+    setUser(updatedUser);
+  };
+
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -88,8 +93,8 @@ export default function App() {
             <Route path="/" element={
               user ? (
                 user.role === 'admin' ? <AdminDashboard /> :
-                user.role === 'teacher' ? <TeacherDashboard user={user} /> :
-                <ParentDashboard user={user} socket={socket} />
+                user.role === 'teacher' ? <TeacherDashboard user={user} onUpdateUser={updateUser} /> :
+                <ParentDashboard user={user} socket={socket} onUpdateUser={updateUser} />
               ) : <Navigate to="/login" />
             } />
           </Routes>
